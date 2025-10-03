@@ -14,12 +14,15 @@ interface AgentState {
   files: { [path: string]: string };
 };
 
+const toToolInput = <T extends z.ZodTypeAny>(schema: T) =>
+  schema as unknown as Tool.Input;
+
 export const codeAgentFunction = inngest.createFunction(
   { id: "code-agent" },
   { event: "code-agent/run" },
   async ({ event, step }) => {
     const sandboxId = await step.run("get-sandbox-id", async () => {
-      const sandbox = await Sandbox.create("vibe-nextjs-test-2");
+      const sandbox = await Sandbox.create("vibe-nextjs-test-bfcb5234");
       await sandbox.setTimeout(SANDBOX_TIMEOUT);
       return sandbox.sandboxId;
     });
@@ -72,16 +75,19 @@ export const codeAgentFunction = inngest.createFunction(
         createTool({
           name: "terminal",
           description: "Use the terminal to run commands",
-          parameters: z.object({
-            command: z.string(),
-          }),
-          handler: async ({ command }, { step }) => {
-            return await step?.run("terminal", async () => {
+          parameters: toToolInput(
+            z.object({
+              command: z.string(),
+            }),
+          ),
+          handler: async ({ command }, opts) => {
+            return await opts.step?.run("terminal", async () => {
               const buffers = { stdout: "", stderr: "" };
 
               try {
                 const sandbox = await getSandbox(sandboxId);
                 const result = await sandbox.commands.run(command, {
+                  stdin: false,
                   onStdout: (data: string) => {
                     buffers.stdout += data;
                   },
@@ -102,21 +108,21 @@ export const codeAgentFunction = inngest.createFunction(
         createTool({
           name: "createOrUpdateFiles",
           description: "Create or update files in the sandbox",
-          parameters: z.object({
-            files: z.array(
-              z.object({
-                path: z.string(),
-                content: z.string(),
-              }),
-            ),
-          }),
-          handler: async (
-            { files },
-            { step, network }: Tool.Options<AgentState>
-          ) => {
-            const newFiles = await step?.run("createOrUpdateFiles", async () => {
+          parameters: toToolInput(
+            z.object({
+              files: z.array(
+                z.object({
+                  path: z.string(),
+                  content: z.string(),
+                }),
+              ),
+            }),
+          ),
+          handler: async ({ files }, opts) => {
+            const agentNetwork = opts.network;
+            const newFiles = await opts.step?.run("createOrUpdateFiles", async () => {
               try {
-                const updatedFiles = network.state.data.files || {};
+                const updatedFiles = agentNetwork?.state.data.files || {};
                 const sandbox = await getSandbox(sandboxId);
                 for (const file of files) {
                   await sandbox.files.write(file.path, file.content);
@@ -130,18 +136,22 @@ export const codeAgentFunction = inngest.createFunction(
             });
 
             if (typeof newFiles === "object") {
-              network.state.data.files = newFiles;
+              if (agentNetwork) {
+                agentNetwork.state.data.files = newFiles;
+              }
             }
           }
         }),
         createTool({
           name: "readFiles",
           description: "Read files from the sandbox",
-          parameters: z.object({
-            files: z.array(z.string()),
-          }),
-          handler: async ({ files }, { step }) => {
-            return await step?.run("readFiles", async () => {
+          parameters: toToolInput(
+            z.object({
+              files: z.array(z.string()),
+            }),
+          ),
+          handler: async ({ files }, opts) => {
+            return await opts.step?.run("readFiles", async () => {
               try {
                 const sandbox = await getSandbox(sandboxId);
                 const contents = [];
@@ -196,7 +206,7 @@ export const codeAgentFunction = inngest.createFunction(
       description: "A fragment title generator",
       system: FRAGMENT_TITLE_PROMPT,
       model: openai({ 
-        model: "gpt-4o",
+        model: "gpt-5",
       }),
     })
 
@@ -205,7 +215,7 @@ export const codeAgentFunction = inngest.createFunction(
       description: "A response generator",
       system: RESPONSE_PROMPT,
       model: openai({ 
-        model: "gpt-4o",
+        model: "gpt-5",
       }),
     });
 
